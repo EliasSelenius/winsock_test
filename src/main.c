@@ -1,4 +1,4 @@
-#include "stdio.h" // printf
+#include <stdio.h> // printf
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,14 +9,40 @@
 
 // clang -g src/main.c -o main.exe
 
+// void* bump_alloc(void* buffer, )
+
+char* socktype_str[] = {
+    [SOCK_STREAM]    = "SOCK_STREAM",
+    [SOCK_DGRAM]     = "SOCK_DGRAM",
+    [SOCK_RAW]       = "SOCK_RAW",
+    [SOCK_RDM]       = "SOCK_RDM",
+    [SOCK_SEQPACKET] = "SOCK_SEQPACKET",
+};
+
+char* family(int f) {
+    switch (f) {
+        case AF_UNSPEC: return "AF_UNSPEC";
+        case AF_INET:   return "AF_INET";
+        case AF_INET6:  return "AF_INET6";
+    }
+    return 0;
+}
+
 void print_addr(struct addrinfo* addr) {
 
     printf("ai_flags     = %d\n", addr->ai_flags);
-    printf("ai_family    = %d\n", addr->ai_family);
-    printf("ai_socktype  = %d\n", addr->ai_socktype);
+    printf("ai_family    = %s\n", family(addr->ai_family));
+    printf("ai_socktype  = %s\n", socktype_str[addr->ai_socktype]);
     printf("ai_protocol  = %d\n", addr->ai_protocol);
     printf("ai_addrlen   = %zu\n", addr->ai_addrlen);
     printf("ai_canonname = %s\n", addr->ai_canonname);
+
+    char node_name[128];
+    char serv_name[64];
+    int flags = NI_NUMERICHOST | NI_NUMERICSERV;
+
+    int ret = getnameinfo(addr->ai_addr, addr->ai_addrlen, node_name, sizeof(node_name), serv_name, sizeof(serv_name), flags);
+    printf("\t%s:%s\n", node_name, serv_name);
 
     if (addr->ai_next) {
         printf("\naddr->ai_next:\n");
@@ -75,6 +101,7 @@ string string_format(char* format, ...) {
     va_list arg_list;
     va_start(arg_list, format);
 
+    // using arg_list twice is apparantly UB.
     int size = vsnprintf(0, 0, format, arg_list);
 
     string str = {0};
@@ -125,7 +152,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // print_addr(addr);
+    print_addr(addr);
 
     SOCKET sok = socket_connect(addr);
     freeaddrinfo(addr);
