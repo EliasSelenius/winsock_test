@@ -28,21 +28,46 @@ char* family(int f) {
     return 0;
 }
 
+void print_addresses(struct addrinfo* addr) {
+    for (; addr; addr = addr->ai_next) {
+        char node_name[128];
+        char serv_name[64];
+        int flags = NI_NUMERICHOST | NI_NUMERICSERV;
+
+        int ret = getnameinfo(addr->ai_addr, addr->ai_addrlen, node_name, sizeof(node_name), serv_name, sizeof(serv_name), flags);
+
+        char* ip_version = 0;
+        switch (addr->ai_family) {
+            case AF_INET:  ip_version = "IPv4"; break;
+            case AF_INET6: ip_version = "IPv6"; break;
+        }
+
+        printf("\t%s............%s\n", ip_version, node_name);
+    }
+}
+
 void print_addr(struct addrinfo* addr) {
 
-    printf("ai_flags     = %d\n", addr->ai_flags);
+    // printf("ai_flags     = %d\n", addr->ai_flags);
     printf("ai_family    = %s\n", family(addr->ai_family));
     printf("ai_socktype  = %s\n", socktype_str[addr->ai_socktype]);
     printf("ai_protocol  = %d\n", addr->ai_protocol);
-    printf("ai_addrlen   = %zu\n", addr->ai_addrlen);
-    printf("ai_canonname = %s\n", addr->ai_canonname);
+    // printf("ai_addrlen   = %zu\n", addr->ai_addrlen);
+    // printf("ai_canonname = %s\n", addr->ai_canonname);
 
     char node_name[128];
     char serv_name[64];
     int flags = NI_NUMERICHOST | NI_NUMERICSERV;
 
     int ret = getnameinfo(addr->ai_addr, addr->ai_addrlen, node_name, sizeof(node_name), serv_name, sizeof(serv_name), flags);
-    printf("\t%s:%s\n", node_name, serv_name);
+
+    char* ip_version = 0;
+    switch (addr->ai_family) {
+        case AF_INET:  ip_version = "IPv4"; break;
+        case AF_INET6: ip_version = "IPv6"; break;
+    }
+
+    printf("\t%s............%s\n", ip_version, node_name);
 
     if (addr->ai_next) {
         printf("\naddr->ai_next:\n");
@@ -152,7 +177,8 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    print_addr(addr);
+    print_addresses(addr);
+    // print_addr(addr);
 
     SOCKET sok = socket_connect(addr);
     freeaddrinfo(addr);
