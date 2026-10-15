@@ -13,17 +13,113 @@
 
 // clang -g src/main.c -o main.exe
 
+
 typedef struct addrinfo addrinfo;
+typedef struct sockaddr sockaddr;
+typedef struct sockaddr_in sockaddr_in;
+typedef struct sockaddr_in6 sockaddr_in6;
+typedef struct sockaddr_storage sockaddr_storage;
+
+// typedef struct sockaddr_storage {
+//     uint16_t ss_family;   // address family
+//     char __ss_pad1[128 - 2];
+// } sockaddr_storage;
+
+void* addrptr(sockaddr* addr) {
+    switch (addr->sa_family) {
+        case AF_INET:  return (void*)&((sockaddr_in*)addr)->sin_addr;
+        case AF_INET6: return (void*)&((sockaddr_in6*)addr)->sin6_addr;
+    }
+
+    return 0;
+}
+
+char* get_address_string(sockaddr* addr, char* buffer, size_t buffer_size) {
+    switch (addr->sa_family) {
+        case AF_INET:  break;
+        case AF_INET6: break;
+        default: return 0;
+    }
+
+    char* ret = (char*)inet_ntop(addr->sa_family, addrptr(addr), buffer, buffer_size);
+    if (ret == 0) {
+        printf("ERROR: %s\n", gai_strerror(WSAGetLastError()));
+    }
+
+    return ret;
+}
+
+
+// // IPv6 Internet address (RFC 2553)
+// // This is an 'on-wire' format structure.
+// typedef struct in6_addr {
+//     union {
+//         uint8_t  Byte[16];
+//         uint16_t Word[8];
+//     } u;
+// } in6_addr;
+
+// typedef struct sockaddr_in6 {
+//     uint16_t sin6_family;    // AF_INET6.
+//     uint16_t sin6_port;      // Transport level port number.
+//     uint32_t sin6_flowinfo;  // IPv6 flow information.
+//     in6_addr sin6_addr;      // IPv6 address.
+//     union {
+//         uint32_t sin6_scope_id;     // Set of interfaces for a scope.
+//         // SCOPE_ID sin6_scope_struct;
+//     };
+// } sockaddr_in6;
+
+// // IPv4 Internet address
+// // This is an 'on-wire' format structure.
+// typedef struct in_addr {
+//     union {
+//         uint8_t s_b1, s_b2, s_b3, s_b4;
+//         uint16_t s_w1, s_w2;
+//         uint32_t S_addr;
+//     } S_un;
+// } in_addr;
+
+// // IPv4 Socket address, Internet style
+// typedef struct sockaddr_in {
+//     uint16_t sin_family;
+//     uint16_t sin_port;
+//     in_addr  sin_addr;
+//     char     sin_zero[8];
+// } sockaddr_in;
+
+// // Structure used to store most addresses.
+// typedef struct sockaddr {
+//     uint16_t sa_family;  // Address family.
+//     char sa_data[14];    // Up to 14 bytes of direct address.
+// } sockaddr;
+
+// // Structure used in getaddrinfo() call
+// typedef struct addrinfo {
+//     int                 ai_flags;       // AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST
+//     int                 ai_family;      // PF_xxx
+//     int                 ai_socktype;    // SOCK_xxx
+//     int                 ai_protocol;    // 0 or IPPROTO_xxx for IPv4 and IPv6
+//     size_t              ai_addrlen;     // Length of ai_addr
+//     char*               ai_canonname;   // Canonical name for nodename
+//     struct sockaddr*    ai_addr;        // Binary address
+//     struct addrinfo*    ai_next;        // Next structure in linked list
+// } addrinfo;
+
 
 // void* bump_alloc(void* buffer, )
 
 
-char* socktype_str[] = {
-    [SOCK_STREAM]    = "SOCK_STREAM",
-    [SOCK_DGRAM]     = "SOCK_DGRAM",
-    [SOCK_RAW]       = "SOCK_RAW",
-    [SOCK_RDM]       = "SOCK_RDM",
-    [SOCK_SEQPACKET] = "SOCK_SEQPACKET",
+char* socktype_str(int ty) {
+    switch (ty) {
+        case SOCK_STREAM:    return "SOCK_STREAM";
+        case SOCK_DGRAM:     return "SOCK_DGRAM";
+        case SOCK_RAW:       return "SOCK_RAW";
+        case SOCK_RDM:       return "SOCK_RDM";
+        case SOCK_SEQPACKET: return "SOCK_SEQPACKET";
+    }
+
+    return 0;
 };
 
 char* family(int f) {
@@ -35,13 +131,22 @@ char* family(int f) {
     return 0;
 }
 
-void print_addresses(struct addrinfo* addr) {
-    for (; addr; addr = addr->ai_next) {
+void print_addresses(addrinfo* addr) {
+    printf("\t\tfamily:\tsocktype:\tprotocol:\n");
+
+    int count = 0;
+    for (; addr; addr = addr->ai_next, count+=1) {
         char node_name[128];
         char serv_name[64];
         int flags = NI_NUMERICHOST | NI_NUMERICSERV;
 
         int ret = getnameinfo(addr->ai_addr, addr->ai_addrlen, node_name, sizeof(node_name), serv_name, sizeof(serv_name), flags);
+        if (ret != 0) {
+            int error = WSAGetLastError();
+            char* info = gai_strerror(error);
+            printf("ERROR: getnameinfo() returned %d '%s'.\n", error, info);
+            continue;
+        }
 
         char* ip_version = 0;
         switch (addr->ai_family) {
@@ -49,63 +154,48 @@ void print_addresses(struct addrinfo* addr) {
             case AF_INET6: ip_version = "IPv6"; break;
         }
 
-        printf("\t%s............%s\n", ip_version, node_name);
+        printf("\t%d.\t%d:%s\t%d:%s\t%d:%s\t(%zubytes) %s\t%s\n",
+            count,
+            addr->ai_family, family(addr->ai_family),
+            addr->ai_socktype, socktype_str(addr->ai_socktype),
+            addr->ai_protocol, "",
+            addr->ai_addrlen,
+            node_name,
+            serv_name
+        );
     }
+
+    printf("\tPrinted %d addresses.\n", count);
 }
 
-void print_addr(struct addrinfo* addr) {
+addrinfo* resolve_host(char* host_or_ip, char* service_or_port) {
+    addrinfo hints = {
+        .ai_flags    = 0, // AI_CANONNAME,
+        .ai_family   = AF_INET, // AF_UNSPEC,   // IPv4 or IPv6
+        // .ai_socktype = SOCK_STREAM, // TCP
+        // .ai_protocol = IPPROTO_TCP,
+        // .ai_protocol = IPPROTO_ICMP,
+    };
 
-    // printf("ai_flags     = %d\n", addr->ai_flags);
-    printf("ai_family    = %s\n", family(addr->ai_family));
-    printf("ai_socktype  = %s\n", socktype_str[addr->ai_socktype]);
-    printf("ai_protocol  = %d\n", addr->ai_protocol);
-    // printf("ai_addrlen   = %zu\n", addr->ai_addrlen);
-    // printf("ai_canonname = %s\n", addr->ai_canonname);
-
-    char node_name[128];
-    char serv_name[64];
-    int flags = NI_NUMERICHOST | NI_NUMERICSERV;
-
-    int ret = getnameinfo(addr->ai_addr, addr->ai_addrlen, node_name, sizeof(node_name), serv_name, sizeof(serv_name), flags);
-
-    char* ip_version = 0;
-    switch (addr->ai_family) {
-        case AF_INET:  ip_version = "IPv4"; break;
-        case AF_INET6: ip_version = "IPv6"; break;
+    addrinfo* addr = 0;
+    if (getaddrinfo(host_or_ip, service_or_port, &hints, &addr)) {
+        int error = WSAGetLastError();
+        char* info = gai_strerror(error);
+        printf("ERROR: getaddrinfo() returned %d '%s'.\n", error, info);
+        return 0;
     }
 
-    printf("\t%s............%s\n", ip_version, node_name);
-
-    if (addr->ai_next) {
-        printf("\naddr->ai_next:\n");
-        print_addr(addr->ai_next);
-    }
-
-    // int                 ai_flags;       // AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST
-    // int                 ai_family;      // PF_xxx
-    // int                 ai_socktype;    // SOCK_xxx
-    // int                 ai_protocol;    // 0 or IPPROTO_xxx for IPv4 and IPv6
-    // size_t              ai_addrlen;     // Length of ai_addr
-    // char *              ai_canonname;   // Canonical name for nodename
-    // _Field_size_bytes_(ai_addrlen) struct sockaddr *   ai_addr;        // Binary address
-    // struct addrinfo *   ai_next;        // Next structure in linked list
+    return addr;
 }
 
-char* get_error_info(int error) {
-    switch (error) {
-        case WSAENETUNREACH: return "unreachable";
-        case WSAETIMEDOUT:   return "timed out";
-        case WSAECONNRESET:  return "An existing connection was forcibly closed by the remote host.";
-    }
-    return "";
-}
-
-SOCKET socket_connect(struct addrinfo* addr) {
+SOCKET socket_connect(addrinfo* addr) {
     for (;addr; addr = addr->ai_next) {
 
         SOCKET sok = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
         if (sok == INVALID_SOCKET) {
-            printf("ERROR: socket(): %d\n", WSAGetLastError());
+            int error = WSAGetLastError();
+            char* info = gai_strerror(error);
+            printf("ERROR: socket(): %d '%s'.\n", error, info);
             continue;
         }
 
@@ -115,7 +205,7 @@ SOCKET socket_connect(struct addrinfo* addr) {
         }
 
         int error = WSAGetLastError();
-        char* info = get_error_info(error);
+        char* info = gai_strerror(error);
         printf("ERROR: connect() returned SOCKET_ERROR. %d - %s\n", error, info);
         closesocket(sok);
     }
@@ -160,22 +250,7 @@ typedef enum Sok_Type {
     Sok_Type_Seqpacket = SOCK_SEQPACKET, // sequenced packet stream
 } Sok_Type;
 
-addrinfo* resolve_host(char* url_or_ip, char* port_or_service) {
-    addrinfo hints = {
-        .ai_flags    = AI_CANONNAME,
-        .ai_family   = AF_UNSPEC,   // IPv4 or IPv6
-        .ai_socktype = SOCK_STREAM, // TCP
-        .ai_protocol = IPPROTO_TCP,
-    };
 
-    addrinfo* addr;
-    if (getaddrinfo(url_or_ip, port_or_service, &hints, &addr)) {
-        printf("ERROR: getaddrinfo\n");
-        WSACleanup();
-        return 0;
-    }
-    return addr;
-}
 
 #pragma pack(push, 1)
 typedef struct Icmp_Header {
@@ -200,47 +275,52 @@ typedef struct Ip_Header {
 } Ip_Header;
 #pragma pack(pop)
 
-unsigned short checksum_icmp(const void* data, size_t length) {
-    const unsigned char* bytes = (const unsigned char*)data;
-    unsigned long sum = 0;
+uint16_t checksum_icmp(void* data, size_t length) {
+    uint8_t* bytes = (uint8_t*)data;
+    uint32_t sum = 0;
 
     for (size_t i = 0; i + 1 < length; i += 2) {
-        sum += ((unsigned short)bytes[i] << 8) | bytes[i + 1];
+        sum += ((uint16_t)bytes[i] << 8) | bytes[i + 1];
     }
 
     if (length & 1) {
-        sum += (unsigned short)bytes[length - 1] << 8;
+        sum += (uint16_t)bytes[length - 1] << 8;
     }
 
     while (sum >> 16) {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
 
-    return (unsigned short)(~sum & 0xFFFF);
+    return (uint16_t)(~sum & 0xFFFF);
 }
 
-int traceroute(const char* hostname, int max_hops, int timeout_ms) {
 
-    struct addrinfo hints = {0};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_RAW;
-    hints.ai_protocol = IPPROTO_ICMP;
+int traceroute(char* hostname, int max_hops, int timeout_ms) {
 
-    struct addrinfo* result = NULL;
-    int status = getaddrinfo(hostname, NULL, &hints, &result);
-    if (status != 0) {
-        printf("ERROR: getaddrinfo() failed for %s: %d\n", hostname, status);
-        return 1;
-    }
+    // addrinfo hints = {0};
+    // hints.ai_family = AF_INET;
+    // hints.ai_socktype = SOCK_RAW;
+    // hints.ai_protocol = IPPROTO_ICMP;
 
-    struct sockaddr_in target = {0};
-    memcpy(&target, result->ai_addr, sizeof(target));
+    // addrinfo* result = NULL;
+    // int status = getaddrinfo(hostname, NULL, &hints, &result);
+    // if (status != 0) {
+    //     printf("ERROR: getaddrinfo() failed for %s: %d\n", hostname, status);
+    //     return 1;
+    // }
+
+    addrinfo* result = resolve_host(hostname, 0);
+    print_addresses(result);
+
+    sockaddr_storage target = {0};
+    memcpy(&target, result->ai_addr, result->ai_addrlen);
     freeaddrinfo(result);
 
     SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock == INVALID_SOCKET) {
         int error = WSAGetLastError();
-        printf("ERROR: socket() failed for ICMP traceroute: %d\n", error);
+        char* info = gai_strerror(error);
+        printf("ERROR: socket(): %d '%s'.\n", error, info);
         return 1;
     }
 
@@ -251,7 +331,7 @@ int traceroute(const char* hostname, int max_hops, int timeout_ms) {
         return 1;
     }
 
-    unsigned short process_id = (unsigned short)(rand() & 0xFFFF);
+    uint16_t process_id = (uint16_t)(rand() & 0xFFFF);
 
     printf("Tracing route to %s over a maximum of %d hops\n\n", hostname, max_hops);
 
@@ -263,47 +343,54 @@ int traceroute(const char* hostname, int max_hops, int timeout_ms) {
         }
 
 
-        ICMP_HEADER request = {0};
+        Icmp_Header request = {0};
         request.type = 8; // ICMP Echo Request
         request.code = 0;
-        request.id = (unsigned short)process_id;
-        request.sequence = (unsigned short)ttl;
+        request.id = (uint16_t)process_id;
+        request.sequence = (uint16_t)ttl;
         request.checksum = checksum_icmp(&request, sizeof(request));
 
         clock_t start = clock();
-        int sent = sendto(sock, (const char*)&request, sizeof(request), 0, (const struct sockaddr*)&target, sizeof(target));
+        int sent = sendto(sock, &request, sizeof(request), 0, &target, sizeof(target));
         if (sent == SOCKET_ERROR) {
-            printf("%d  sendto() failed: %d\n", ttl, WSAGetLastError());
+            int error = WSAGetLastError();
+            char* info = gai_strerror(error);
+            printf("ERROR: sendto(): %d '%s'.\n", error, info);
             break;
         }
 
         char buffer[512] = {0};
-        struct sockaddr_in from = {0};
+        sockaddr_storage from = {0};
         int from_len = sizeof(from);
 
-        int bytes = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr*)&from, &from_len);
+        int bytes = recvfrom(sock, buffer, sizeof(buffer), 0, &from, &from_len);
         long elapsed = (clock() - start) * 1000 / CLOCKS_PER_SEC;
 
         if (bytes == SOCKET_ERROR) {
             printf("%d  *\t\tRequest timed out\n", ttl);
-            printf("ERROR: %s\n", gai_strerror(WSAGetLastError()));
+
+            int error = WSAGetLastError();
+            char* info = gai_strerror(error);
+            printf("ERROR: recvfrom(): %d '%s'.\n", error, info);
             continue;
         }
+
+        char from_ip[INET6_ADDRSTRLEN] = {0};
+        get_address_string(&from, from_ip, sizeof(from_ip));
+        printf("%s\n", from_ip);
 
         if (bytes < 28) {
             printf("%d  *\t\tMalformed ICMP reply\n", ttl);
             continue;
         }
 
-        unsigned int ip_header_length = (unsigned int)(buffer[0] & 0x0F) * 4;
-        if (ip_header_length < 20 || bytes < (int)(ip_header_length + sizeof(ICMP_HEADER))) {
+        uint32_t ip_header_length = (uint32_t)(buffer[0] & 0x0F) * 4;
+        if (ip_header_length < 20 || bytes < (int)(ip_header_length + sizeof(Icmp_Header))) {
             printf("%d  *\t\tIncomplete ICMP reply\n", ttl);
             continue;
         }
 
-        ICMP_HEADER* reply = (ICMP_HEADER*)(buffer + ip_header_length);
-        char from_ip[INET_ADDRSTRLEN] = {0};
-        inet_ntop(AF_INET, &from.sin_addr, from_ip, sizeof(from_ip));
+        Icmp_Header* reply = (Icmp_Header*)(buffer + ip_header_length);
 
         if (reply->type == 11) {
             printf("%d  %s\t%ld ms\t(TTL expired)\n", ttl, from_ip, elapsed);
@@ -324,28 +411,16 @@ int traceroute(const char* hostname, int max_hops, int timeout_ms) {
     return 1;
 }
 
-/*
-ai_family:
-    #define AF_UNSPEC       0               // unspecified
-    #define AF_INET         2               // internetwork: UDP, TCP, etc.
-    #define AF_INET6        23              // Internetwork Version 6
-
-*/
-
-
-
 int main(int argc, char** argv) {
     printf("Hello Winsock\n");
 
-
     if (argc < 2) {
         printf("Usage: %s <hostname> [port]\n", argv[0]);
-        printf("       %s traceroute <hostname> [max_hops] [timeout_ms]\n", argv[0]);
         return 1;
     }
 
     char* host = argv[1];
-    char* port = argc > 2 ? argv[2] : "80"; // plaintext HTTP normally uses 80; 443 is HTTPS and requires TLS/SSL.
+    char* port = argc > 2 ? argv[2] : 0;
     printf("host: %s\n", host);
     printf("port: %s\n", port);
 
@@ -359,27 +434,17 @@ int main(int argc, char** argv) {
     {
         int max_hops = 30;
         int timeout_ms = 3000;
-        int traceroute_result = traceroute(host, max_hops, timeout_ms);
-        return traceroute_result;
+        traceroute(host, max_hops, timeout_ms);
+        return 0;
     }
 
-    struct addrinfo hints = {
-        .ai_flags    = AI_CANONNAME,
-        .ai_family   = AF_UNSPEC,   // IPv4 or IPv6
-        .ai_socktype = SOCK_STREAM, // TCP
-        .ai_protocol = IPPROTO_TCP,
-    };
 
-    struct addrinfo* addr;
-    if (getaddrinfo(host, port, &hints, &addr)) {
-        printf("ERROR: getaddrinfo\n");
-        WSACleanup();
-        return 2;
+    addrinfo* addr = resolve_host(host, port);
+    if (!addr) {
+        return 0;
     }
 
     print_addresses(addr);
-    // print_addr(addr);
-
     SOCKET sok = socket_connect(addr);
     freeaddrinfo(addr);
 
@@ -407,7 +472,7 @@ int main(int argc, char** argv) {
 
         if (bytes == SOCKET_ERROR) {
             int error = WSAGetLastError();
-            char* info = get_error_info(error);
+            char* info = gai_strerror(error);
             printf("send failed with error: %d - %s\n", error, info);
             closesocket(sok);
             WSACleanup();
@@ -436,7 +501,7 @@ int main(int argc, char** argv) {
         int bytes = recv(sok, buffer + total_bytes, buffer_size - total_bytes, 0);
         if (bytes < 0) {
             int error = WSAGetLastError();
-            char* info = get_error_info(error);
+            char* info = gai_strerror(error);
             printf("recv failed with error: %d - %s\n", error, info);
             break;
         }
