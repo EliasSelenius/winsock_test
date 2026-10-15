@@ -9,7 +9,10 @@
 
 // clang -g src/main.c -o main.exe
 
+typedef struct addrinfo addrinfo;
+
 // void* bump_alloc(void* buffer, )
+
 
 char* socktype_str[] = {
     [SOCK_STREAM]    = "SOCK_STREAM",
@@ -135,6 +138,37 @@ string string_format(char* format, ...) {
 
     va_end(arg_list);
     return str;
+}
+
+typedef enum Addr_Family {
+    Addr_Family_Unspecified = AF_UNSPEC,
+    Addr_Family_Inet        = AF_INET,
+    Addr_Family_Inet6       = AF_INET6,
+} Addr_Family;
+
+typedef enum Sok_Type {
+    Sok_Type_Stream    = SOCK_STREAM,    // stream socket
+    Sok_Type_Dgram     = SOCK_DGRAM,     // datagram socket
+    Sok_Type_Raw       = SOCK_RAW,       // raw-protocol interface
+    Sok_Type_Rdm       = SOCK_RDM,       // reliably-delivered message
+    Sok_Type_Seqpacket = SOCK_SEQPACKET, // sequenced packet stream
+} Sok_Type;
+
+addrinfo* resolve_host(char* url_or_ip, char* port_or_service) {
+    addrinfo hints = {
+        .ai_flags    = AI_CANONNAME,
+        .ai_family   = AF_UNSPEC,   // IPv4 or IPv6
+        .ai_socktype = SOCK_STREAM, // TCP
+        .ai_protocol = IPPROTO_TCP,
+    };
+
+    addrinfo* addr;
+    if (getaddrinfo(url_or_ip, port_or_service, &hints, &addr)) {
+        printf("ERROR: getaddrinfo\n");
+        WSACleanup();
+        return 0;
+    }
+    return addr;
 }
 
 /*
