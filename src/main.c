@@ -13,6 +13,28 @@
 
 // clang -g src/main.c -o main.exe
 
+typedef struct string {
+    char* chars;
+    size_t length;
+} string;
+
+string string_format(char* format, ...) {
+    va_list arg_list;
+    va_start(arg_list, format);
+    int size = vsnprintf(NULL, 0, format, arg_list);
+    va_end(arg_list);
+
+    string str = {0};
+    if (size < 0) return str;
+    str.chars = calloc(1, size + 1);
+
+    va_start(arg_list, format);
+    str.length = vsnprintf(str.chars, size + 1, format, arg_list);
+    va_end(arg_list);
+    return str;
+}
+
+
 
 typedef struct addrinfo addrinfo;
 typedef struct sockaddr sockaddr;
@@ -212,29 +234,6 @@ SOCKET socket_connect(addrinfo* addr) {
 
     return INVALID_SOCKET;
 }
-
-
-typedef struct string {
-    char* chars;
-    size_t length;
-} string;
-
-string string_format(char* format, ...) {
-    va_list arg_list;
-    va_start(arg_list, format);
-    int size = vsnprintf(NULL, 0, format, arg_list);
-    va_end(arg_list);
-
-    string str = {0};
-    if (size < 0) return str;
-    str.chars = calloc(1, size + 1);
-
-    va_start(arg_list, format);
-    str.length = vsnprintf(str.chars, size + 1, format, arg_list);
-    va_end(arg_list);
-    return str;
-}
-
 
 typedef enum Addr_Family {
     Addr_Family_Unspecified = AF_UNSPEC,
