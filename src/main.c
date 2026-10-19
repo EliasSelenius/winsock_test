@@ -190,13 +190,13 @@ void print_addresses(addrinfo* addr) {
     printf("\tPrinted %d addresses.\n", count);
 }
 
-addrinfo* resolve_host(char* host_or_ip, char* service_or_port) {
+addrinfo* resolve_host(char* host_or_ip, char* service_or_port, int socktype, int protocol) {
     addrinfo hints = {
         .ai_flags    = 0, // AI_CANONNAME,
-        .ai_family   = AF_INET, // AF_UNSPEC,   // IPv4 or IPv6
-        // .ai_socktype = SOCK_STREAM, // TCP
-        // .ai_protocol = IPPROTO_TCP,
-        // .ai_protocol = IPPROTO_ICMP,
+        .ai_family   = AF_UNSPEC,   // IPv4 or IPv6
+        // .ai_family   = AF_INET,   // IPv4 or IPv6
+        .ai_socktype = socktype,
+        .ai_protocol = protocol,
     };
 
     addrinfo* addr = 0;
@@ -212,7 +212,6 @@ addrinfo* resolve_host(char* host_or_ip, char* service_or_port) {
 
 SOCKET socket_connect(addrinfo* addr) {
     for (;addr; addr = addr->ai_next) {
-
         SOCKET sok = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
         if (sok == INVALID_SOCKET) {
             int error = WSAGetLastError();
@@ -308,14 +307,33 @@ int traceroute(char* hostname, int max_hops, int timeout_ms) {
     //     return 1;
     // }
 
-    addrinfo* result = resolve_host(hostname, 0);
+    addrinfo* result = resolve_host(hostname, 0, 0, 0);
     print_addresses(result);
+
+    int family   = result->ai_family;
+    int protocol = 0;
+    int level    = 0;
+    int optname  = 0;
+    switch (family) {
+        case AF_INET: {
+            protocol = IPPROTO_ICMP;
+            level = IPPROTO_IP;
+            optname = IP_TTL;
+        } break;
+        case AF_INET6: {
+            protocol = IPPROTO_ICMPV6;
+            level = IPPROTO_IPV6;
+            optname = IPV6_UNICAST_HOPS;
+        } break;
+        default: printf("ERROR: Unrecognized family %d.\n", result->ai_family);
+    }
 
     sockaddr_storage target = {0};
     memcpy(&target, result->ai_addr, result->ai_addrlen);
     freeaddrinfo(result);
 
-    SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
+    SOCKET sock = socket(family, SOCK_RAW, protocol);
     if (sock == INVALID_SOCKET) {
         int error = WSAGetLastError();
         char* info = gai_strerror(error);
@@ -323,7 +341,7 @@ int traceroute(char* hostname, int max_hops, int timeout_ms) {
         return 1;
     }
 
-    int rcv_timeout = timeout_ms;
+    int rcv_timeout = 5000; // timeout_ms;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rcv_timeout, sizeof(rcv_timeout)) == SOCKET_ERROR) {
         printf("ERROR: setsockopt(SO_RCVTIMEO) failed: %d\n", WSAGetLastError());
         closesocket(sock);
@@ -336,27 +354,32 @@ int traceroute(char* hostname, int max_hops, int timeout_ms) {
 
     for (int ttl = 1; ttl <= max_hops; ++ttl) {
         int hop_ttl = ttl;
-        if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&hop_ttl, sizeof(hop_ttl)) == SOCKET_ERROR) {
+        if (setsockopt(sock, level, optname, (const char*)&hop_ttl, sizeof(hop_ttl)) == SOCKET_ERROR) {
             printf("ERROR: setsockopt(IP_TTL) failed: %d\n", WSAGetLastError());
             break;
         }
 
+        char send_data[sizeof(Icmp_Header) + 64] = {0};
+        memset(send_data, 123, sizeof(send_data));
 
-        Icmp_Header request = {0};
-        request.type = 8; // ICMP Echo Request
-        request.code = 0;
-        request.id = (uint16_t)process_id;
-        request.sequence = (uint16_t)ttl;
-        request.checksum = checksum_icmp(&request, sizeof(request));
+        Icmp_Header* icmp = (Icmp_Header*)send_data;
+        icmp->type = 8; // ICMP Echo Request
+        icmp->code = 0;
+        icmp->id       = htons((uint16_t)process_id);
+        icmp->sequence = htons((uint16_t)ttl);
+        icmp->checksum = checksum_icmp(icmp, sizeof(send_data));
 
         clock_t start = clock();
-        int sent = sendto(sock, &request, sizeof(request), 0, &target, sizeof(target));
+        int sent = sendto(sock, send_data, sizeof(send_data), 0, &target, sizeof(target));
         if (sent == SOCKET_ERROR) {
             int error = WSAGetLastError();
             char* info = gai_strerror(error);
             printf("ERROR: sendto(): %d '%s'.\n", error, info);
             break;
         }
+
+        printf("sendto() returned %d.\n", sent);
+
 
         char buffer[512] = {0};
         sockaddr_storage from = {0};
@@ -396,7 +419,7 @@ int traceroute(char* hostname, int max_hops, int timeout_ms) {
             continue;
         }
 
-        if (reply->type == 0 && reply->id == request.id && reply->sequence == request.sequence) {
+        if (reply->type == 0 && reply->id == icmp->id && reply->sequence == icmp->sequence) {
             printf("%d  %s\t%ld ms\t(destination reached)\n", ttl, from_ip, elapsed);
             closesocket(sock);
             return 0;
@@ -437,8 +460,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-
-    addrinfo* addr = resolve_host(host, port);
+    int socktype = SOCK_STREAM;
+    int protocol = IPPROTO_TCP;
+    addrinfo* addr = resolve_host(host, port, socktype, protocol);
     if (!addr) {
         return 0;
     }
